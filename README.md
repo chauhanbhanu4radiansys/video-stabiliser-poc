@@ -139,6 +139,66 @@ python run_video_stabiliser.py /absolute/path/to/input.mp4
   - `temp/frames/`: Extracted video frames
   - `temp/flows/`: Optical flow data
   - `temp/depths/`: Depth maps
+  - **Note**: Intermediate files are automatically cleaned up after each stage to save disk space
+
+### Performance Metrics
+
+The script automatically tracks and displays performance metrics:
+
+- **Processing Time**: Total time and per-stage breakdown
+  - Frame extraction time
+  - Optical flow generation time
+  - Geometry estimation time (usually the longest stage)
+  - Trajectory smoothing time
+  - Frame warping time
+  - Video creation time
+
+- **Memory Usage**: Tracks memory consumption throughout processing
+  - Initial memory usage
+  - Peak memory usage (maximum during processing)
+  - Final memory usage
+  - Memory increase from start to finish
+
+- **Intermediate File Sizes**: Shows disk space used by temporary files
+  - Frames directory size
+  - Flows directory size
+  - Depths directory size
+  - Total intermediate storage
+
+**Example output:**
+```
+============================================================
+PROCESSING SUMMARY
+============================================================
+Total processing time: 5m 23.45s
+
+Stage breakdown:
+  Frame Extraction: 12.34s (3.8%)
+  Optical Flow: 1m 45.67s (32.5%)
+  Geometry Estimation: 2m 58.12s (55.2%)
+  Trajectory Smoothing: 0.23s (0.1%)
+  Frame Warping: 15.89s (4.9%)
+  Video Creation: 11.20s (3.5%)
+
+Memory usage:
+  Initial memory: 512.3 MB
+  Peak memory: 2847.6 MB
+  Final memory: 523.1 MB
+  Memory increase: 10.8 MB
+
+Intermediate file sizes (before cleanup):
+  frames: 1250.4 MB
+  flows: 456.2 MB
+  depths: 234.8 MB
+  Total: 1941.4 MB
+============================================================
+```
+
+**Note**: Install `psutil` for accurate memory tracking:
+```bash
+pip install psutil
+```
+Without `psutil`, memory metrics will show as 0 MB.
 
 ### Configuration
 
