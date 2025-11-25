@@ -17,7 +17,7 @@ class OptimizationDataset:
         self.config = config
         self.root = frames_dir
         self.flows_dir = flows_dir
-        self.image_names = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+        self.image_names = sorted(glob.glob(os.path.join(frames_dir, f"*.{config.temp_frame_format}")))
         
         # Get original size from first image
         sample = imread(self.image_names[0])
@@ -99,24 +99,70 @@ class OptimizationDataset:
         # flows[..., 0] = flows[..., 0] / W * w
         # flows[..., 1] = flows[..., 1] / H * h
         
-        # My optical_flow.py already resizes flow to original resolution (W, H)
-        # SequenceIO seems to resize it to (w, h) (model input size)
+        # Check flow shape to determine if it's already resized
+        # flows shape: (B, 2, H_flow, W_flow)
+        # If H_flow == h and W_flow == w, then it's already resized
         
-        b = flows.shape[0]
+        b, _, flow_h, flow_w, _ = flows.shape
         
-        # Resize flow values to model resolution
-        flows[..., 0] = flows[..., 0] / W * w
-        flows[..., 1] = flows[..., 1] / H * h
+        if flow_h == h and flow_w == w:
+            # Already at target resolution
+            # Values are scaled to (w, h) if saved correctly in optical_flow.py
+            pass
+        else:
+            # Need to resize and rescale
+            # This happens if we saved at original resolution or some other resolution
+            # Resize flow values to model resolution
+            flows[..., 0] = flows[..., 0] / flow_w * w
+            flows[..., 1] = flows[..., 1] / flow_h * h
         
-        # Interpolate flow field to model resolution
-        # flows shape: (B, 2, H, W, 2)
-        # We need to permute to use F.interpolate
+        # Interpolate flow field to model resolution if needed
+        flows_tensor = torch.from_numpy(flows).float() # Convert to float32
         
+        if flow_h != h or flow_w != w:
+            # (B, 2, H, W) -> (B, 2, h, w)
+            flows_tensor = torch.nn.functional.interpolate(flows_tensor, (h, w), mode='area')
+            
+        # Reshape to (B, 2, h, w, 2) for grid sample compatibility
+        # Current shape: (B, 2, h, w, 2)
+        # flows_tensor = flows_tensor.permute(0, 2, 3, 1).contiguous() # ERROR: This was for 4D input
+        pass
+        # Now (B, h, w, 2)
+        
+        # Wait, original code expected (B, 2, h, w, 2)?
+        # Let's check original return:
+        # flows_tensor = flows_tensor.permute(0, 2, 3, 1).view(b, 2, h, w, 2)
+        # My previous code:
+        # flows_tensor = flows_tensor.view(b*2, H, W, 2).permute(0, 3, 1, 2)
+        # The input flows from np.stack was (B, 2, H, W, 2) in previous code?
+        # Let's check optical_flow.py save format again.
+        # np.stack([f_fwd, f_bwd], axis=0) -> (2, H, W, 2)
+        # So flows loaded is (B, 2, H, W, 2)
+        
+        # My new optical_flow.py saves (2, H, W, 2) as well.
+        # So flows is (B, 2, H, W, 2)
+        
+        # Let's correct the logic above for (B, 2, H, W, 2) input
+        
+        b, _, flow_h, flow_w, _ = flows.shape
+        
+        if flow_h == h and flow_w == w:
+             pass
+        else:
+             flows[..., 0] = flows[..., 0] / flow_w * w
+             flows[..., 1] = flows[..., 1] / flow_h * h
+             
         flows_tensor = torch.from_numpy(flows).float()
-        # (B, 2, H, W, 2) -> (B*2, 2, H, W) -> (B*2, 2, h, w)
-        flows_tensor = flows_tensor.view(b*2, H, W, 2).permute(0, 3, 1, 2)
-        flows_tensor = torch.nn.functional.interpolate(flows_tensor, (h, w), mode='area')
-        flows_tensor = flows_tensor.permute(0, 2, 3, 1).view(b, 2, h, w, 2)
+        
+        if flow_h != h or flow_w != w:
+             # (B, 2, H, W, 2) -> (B*2, H, W, 2) -> (B*2, 2, H, W)
+             flows_tensor = flows_tensor.view(b*2, flow_h, flow_w, 2).permute(0, 3, 1, 2)
+             flows_tensor = torch.nn.functional.interpolate(flows_tensor, (h, w), mode='area')
+             # (B*2, 2, h, w) -> (B*2, h, w, 2) -> (B, 2, h, w, 2)
+             flows_tensor = flows_tensor.permute(0, 2, 3, 1).view(b, 2, h, w, 2)
+        else:
+             # Already (B, 2, h, w, 2)
+             pass
         
         # Add grid
         grid_x = torch.arange(0, w).view(1, 1, 1, w).expand(b, 2, h, w).float()

@@ -32,7 +32,8 @@ class OpticalFlowGenerator:
             flows_dir = self.temp_dir_obj.name
             
         print(f"=> Generating optical flow to {flows_dir}")
-        frame_paths = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+        ext = self.config.temp_frame_format
+        frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
         
         for interval in self.config.intervals:
             self._generate_interval(frame_paths, interval, flows_dir)
@@ -86,15 +87,24 @@ class OpticalFlowGenerator:
                 if frame_idx >= len(frame_paths) - interval:
                     break
                     
-                # Resize flow back to original resolution and scale values
+                # Resize flow
                 f_fwd = flow_fwd[i]
                 f_bwd = flow_bwd[i]
                 
-                f_fwd_resized = cv2.resize(f_fwd, (W_orig, H_orig))
-                f_bwd_resized = cv2.resize(f_bwd, (W_orig, H_orig))
+                if self.config.save_flow_small:
+                    # Resize to optimization resolution (192x128)
+                    target_w, target_h = self.config.width, self.config.height
+                else:
+                    # Resize to original resolution
+                    target_w, target_h = W_orig, H_orig
+                    
+                f_fwd_resized = cv2.resize(f_fwd, (target_w, target_h))
+                f_bwd_resized = cv2.resize(f_bwd, (target_w, target_h))
                 
-                scale_x = W_orig / float(W_target)
-                scale_y = H_orig / float(H_target)
+                # Scale flow values based on resolution change
+                # Flow is computed at (W_target, H_target)
+                scale_x = target_w / float(W_target)
+                scale_y = target_h / float(H_target)
                 
                 f_fwd_resized[..., 0] *= scale_x
                 f_fwd_resized[..., 1] *= scale_y
@@ -102,6 +112,10 @@ class OpticalFlowGenerator:
                 f_bwd_resized[..., 1] *= scale_y
                 
                 flow_combined = np.stack([f_fwd_resized, f_bwd_resized], axis=0)
+                
+                if self.config.save_flow_16bit:
+                    flow_combined = flow_combined.astype(np.float16)
+                    
                 save_path = os.path.join(interval_dir, f"{frame_idx:05d}.npy")
                 if not os.path.exists(interval_dir):
                     print(f"WARNING: Directory {interval_dir} does not exist! Recreating...")

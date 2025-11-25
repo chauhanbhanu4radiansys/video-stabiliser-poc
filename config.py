@@ -44,6 +44,10 @@ class StabilizationConfig:
     # Temporary files
     temp_dir: Optional[str] = None
     keep_intermediates: bool = False
+    temp_frame_format: str = "jpg" # jpg or png
+    temp_frame_quality: int = 95 # 0-100 for jpg
+    save_flow_16bit: bool = True # Save flow as float16
+    save_flow_small: bool = True # Save flow at optimization resolution (192x128)
     
     # Output
     optimize_codec: bool = True

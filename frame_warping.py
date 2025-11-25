@@ -54,7 +54,8 @@ class FrameWarper:
         """Warp all frames using compensation transforms."""
         print("=> Warping frames...")
         
-        frame_paths = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+        ext = self.config.temp_frame_format
+        frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
         depth_files = sorted(glob.glob(os.path.join(depths_dir, "*.npy")))
         
         if not frame_paths:
