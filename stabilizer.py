@@ -114,14 +114,29 @@ class Deep3DStabilizer:
         self.config.validate()
         
         try:
-            # Stage 1: Extract frames
+            # Stage 1: Extract frames or Initialize VideoReader
             stage_start = time.time()
-            frames_dir = self.preprocessor.extract_frames(input_path)
+            
+            if self.config.direct_video_read:
+                print(f"=> Direct video reading enabled. Skipping frame extraction.")
+                from .video_io import VideoReader
+                self.video_reader = VideoReader(input_path)
+                frames_dir = None # No frames directory
+                frames_size = 0.0
+                
+                # Verify video properties match config if needed, or update config?
+                # Actually config might have defaults, but we should respect video properties
+                # But config.width/height are optimization targets, not video size.
+                pass
+            else:
+                frames_dir = self.preprocessor.extract_frames(input_path)
+                frames_size = self._get_directory_size(frames_dir)
+                self.video_reader = None
+                
             stage_time = time.time() - stage_start
             stage_times['frame_extraction'] = stage_time
             stage_memory = self._get_memory_usage()
             stage_memories['frame_extraction'] = stage_memory
-            frames_size = self._get_directory_size(frames_dir)
             intermediate_sizes['frames'] = frames_size
             peak_memory['rss'] = max(peak_memory['rss'], stage_memory['rss'])
             print(f"  Time: {self._format_time(stage_time)} | Memory: {stage_memory['rss']:.1f} MB | Frames size: {frames_size:.1f} MB")
@@ -134,7 +149,7 @@ class Deep3DStabilizer:
             
             # Stage 2: Generate optical flow
             stage_start = time.time()
-            flows_dir = self.flow_generator.generate(frames_dir)
+            flows_dir = self.flow_generator.generate(frames_dir, self.video_reader)
             stage_time = time.time() - stage_start
             stage_times['optical_flow'] = stage_time
             stage_memory = self._get_memory_usage()
@@ -147,7 +162,7 @@ class Deep3DStabilizer:
             # Stage 3: Estimate depth and poses
             # Note: Both frames_dir and flows_dir are needed for depth estimation
             stage_start = time.time()
-            depths_dir, poses = self.geometry_estimator.optimize(frames_dir, flows_dir)
+            depths_dir, poses = self.geometry_estimator.optimize(frames_dir, flows_dir, self.video_reader)
             stage_time = time.time() - stage_start
             stage_times['geometry_estimation'] = stage_time
             stage_memory = self._get_memory_usage()
@@ -173,7 +188,7 @@ class Deep3DStabilizer:
             # Stage 5: Warp frames
             # Note: frames_dir is still needed for warping (loads frames from disk)
             stage_start = time.time()
-            stabilized_frames = self.frame_warper.warp(frames_dir, depths_dir, compensations)
+            stabilized_frames = self.frame_warper.warp(frames_dir, depths_dir, compensations, self.video_reader)
             stage_time = time.time() - stage_start
             stage_times['frame_warping'] = stage_time
             stage_memory = self._get_memory_usage()
@@ -252,6 +267,8 @@ class Deep3DStabilizer:
                 self.flow_generator.temp_dir_obj.cleanup()
             if hasattr(self, 'geometry_estimator') and hasattr(self.geometry_estimator, 'temp_dir_obj'):
                 self.geometry_estimator.temp_dir_obj.cleanup()
+            if hasattr(self, 'video_reader') and self.video_reader:
+                self.video_reader.close()
 
 def stabilize_video_deep3d(input_video_path: str, output_video_path: str, **kwargs) -> Dict[str, Any]:
     """

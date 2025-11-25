@@ -21,7 +21,7 @@ class OpticalFlowGenerator:
         model.eval()
         return model
         
-    def generate(self, frames_dir: str) -> str:
+    def generate(self, frames_dir: str, video_reader=None) -> str:
         """Generate optical flow for all frame intervals."""
         if self.config.temp_dir:
             flows_dir = os.path.join(self.config.temp_dir, "flows")
@@ -32,15 +32,21 @@ class OpticalFlowGenerator:
             flows_dir = self.temp_dir_obj.name
             
         print(f"=> Generating optical flow to {flows_dir}")
-        ext = self.config.temp_frame_format
-        frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
+        
+        if video_reader:
+            num_frames = len(video_reader)
+            # Create dummy paths or just use indices
+            frame_paths = list(range(num_frames)) 
+        else:
+            ext = self.config.temp_frame_format
+            frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
         
         for interval in self.config.intervals:
-            self._generate_interval(frame_paths, interval, flows_dir)
+            self._generate_interval(frame_paths, interval, flows_dir, video_reader)
             
         return flows_dir
         
-    def _generate_interval(self, frame_paths, interval, output_dir):
+    def _generate_interval(self, frame_paths, interval, output_dir, video_reader=None):
         """Generate flow at specific interval."""
         interval_dir = os.path.join(output_dir, str(interval))
         os.makedirs(interval_dir, exist_ok=True)
@@ -62,10 +68,25 @@ class OpticalFlowGenerator:
             current_frame_paths = frame_paths[batch_begin : current_batch_end]
             
             # Load and resize frames
-            frames_orig = [cv2.imread(p) for p in current_frame_paths]
+            if video_reader:
+                frames_orig = []
+                for idx in current_frame_paths: # These are indices now
+                    f = video_reader.get_frame(idx) # RGB
+                    # Convert to BGR for consistency with cv2.imread if needed?
+                    # cv2.imread returns BGR.
+                    # video_reader returns RGB.
+                    # Below we convert BGR to RGB: f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                    # So if we have RGB, we don't need conversion.
+                    # But let's check what frames_orig is used for.
+                    # H_orig, W_orig = frames_orig[0].shape[:2]
+                    frames_orig.append(f)
+            else:
+                frames_orig = [cv2.imread(p) for p in current_frame_paths]
+            
             frames = []
-            for f in frames_orig:
-                f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+            for i, f in enumerate(frames_orig):
+                if not video_reader:
+                    f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
                 f = cv2.resize(f, (W_target, H_target))
                 frames.append(f)
                 
@@ -83,7 +104,11 @@ class OpticalFlowGenerator:
             
             # Save flows
             for i in range(len(flow_fwd)):
-                frame_idx = batch_begin + i
+                if video_reader:
+                    frame_idx = current_frame_paths[i]
+                else:
+                    frame_idx = batch_begin + i
+                
                 if frame_idx >= len(frame_paths) - interval:
                     break
                     

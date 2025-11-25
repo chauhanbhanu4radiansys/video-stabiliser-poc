@@ -50,21 +50,31 @@ class FrameWarper:
         
         self.warper = Warper(opt, self.intrinsic_res).to(self.device)
         
-    def warp(self, frames_dir: str, depths_dir: str, compensations: np.ndarray) -> list[np.ndarray]:
+    def warp(self, frames_dir: str, depths_dir: str, compensations: np.ndarray, video_reader=None) -> list[np.ndarray]:
         """Warp all frames using compensation transforms."""
         print("=> Warping frames...")
         
-        ext = self.config.temp_frame_format
-        frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
-        depth_files = sorted(glob.glob(os.path.join(depths_dir, "*.npy")))
-        
-        if not frame_paths:
-            return []
+        if video_reader:
+            num_frames = len(video_reader)
+            frame_paths = list(range(num_frames))
             
-        # Init intrinsics based on first frame
-        sample = cv2.imread(frame_paths[0])
-        h_orig, w_orig = sample.shape[:2]
-        self._init_intrinsics(w_orig, h_orig)
+            # Init intrinsics based on video properties
+            h_orig = video_reader.height
+            w_orig = video_reader.width
+            self._init_intrinsics(w_orig, h_orig)
+        else:
+            ext = self.config.temp_frame_format
+            frame_paths = sorted(glob.glob(os.path.join(frames_dir, f"*.{ext}")))
+            
+            if not frame_paths:
+                return []
+                
+            # Init intrinsics based on first frame
+            sample = cv2.imread(frame_paths[0])
+            h_orig, w_orig = sample.shape[:2]
+            self._init_intrinsics(w_orig, h_orig)
+        
+        depth_files = sorted(glob.glob(os.path.join(depths_dir, "*.npy")))
         
         # Compute warp maps
         warp_maps, crop_bounds = self._compute_warp_maps(depth_files, compensations)
@@ -89,8 +99,18 @@ class FrameWarper:
             # Load images
             imgs = []
             for i in range(batch_begin, batch_end):
-                img = cv2.imread(frame_paths[i])
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                if video_reader:
+                    # video_reader returns RGB
+                    img = video_reader.get_frame(i)
+                    # cv2.imread returns BGR, and we convert to RGB below.
+                    # If we already have RGB, we skip conversion?
+                    # Original code: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    # So if video_reader gives RGB, we are good.
+                else:
+                    img = cv2.imread(frame_paths[i])
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    
+                # Normalize? Original code: ((imgs * std + mean) * 255)
                 # Normalize? Original code: ((imgs * std + mean) * 255)
                 # SequenceIO loads as normalized tensor.
                 # Here we load as uint8 numpy.

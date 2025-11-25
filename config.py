@@ -48,6 +48,7 @@ class StabilizationConfig:
     temp_frame_quality: int = 95 # 0-100 for jpg
     save_flow_16bit: bool = True # Save flow as float16
     save_flow_small: bool = True # Save flow at optimization resolution (192x128)
+    direct_video_read: bool = True # Read frames directly from video, skip extraction
     
     # Output
     optimize_codec: bool = True

@@ -13,15 +13,25 @@ from .models.warper import pose_vec2mat, inverse_pose
 
 class OptimizationDataset:
     """Simplified dataset loader for optimization, replacing SequenceIO."""
-    def __init__(self, config: StabilizationConfig, frames_dir: str, flows_dir: str):
+    def __init__(self, config: StabilizationConfig, frames_dir: str, flows_dir: str, video_reader=None):
         self.config = config
         self.root = frames_dir
         self.flows_dir = flows_dir
-        self.image_names = sorted(glob.glob(os.path.join(frames_dir, f"*.{config.temp_frame_format}")))
+        self.video_reader = video_reader
         
-        # Get original size from first image
-        sample = imread(self.image_names[0])
-        self.origin_h, self.origin_w = sample.shape[:2]
+        if video_reader:
+            self.num_frames = len(video_reader)
+            # Use video properties
+            self.origin_h = video_reader.height
+            self.origin_w = video_reader.width
+            self.image_names = None # Not used
+        else:
+            self.image_names = sorted(glob.glob(os.path.join(frames_dir, f"*.{config.temp_frame_format}")))
+            self.num_frames = len(self.image_names)
+            
+            # Get original size from first image
+            sample = imread(self.image_names[0])
+            self.origin_h, self.origin_w = sample.shape[:2]
         self.h, self.w = config.height, config.width
         
         # Intrinsics
@@ -39,13 +49,17 @@ class OptimizationDataset:
         self.std = np.array([config.img_std] * 3, dtype=np.float32)
 
     def __len__(self):
-        return len(self.image_names)
+        return self.num_frames
         
     def get_intrinsic(self):
         return self.intrinsic_res
 
     def load_image(self, index):
-        img = imread(self.image_names[index]).astype(np.float32)
+        if self.video_reader:
+            img = self.video_reader.get_frame(index).astype(np.float32)
+        else:
+            img = imread(self.image_names[index]).astype(np.float32)
+            
         img = imresize(img, (self.h, self.w))
         img = np.transpose(img, (2, 0, 1))
         tensor_img = (torch.from_numpy(img).float() / 255 - self.mean[:, None, None]) / self.std[:, None, None]
@@ -232,12 +246,12 @@ class GeometryEstimator:
         ]
         self.optimizer = optim.Adam(params, betas=(0.9, 0.99))
         
-    def optimize(self, frames_dir: str, flows_dir: str) -> tuple[str, np.ndarray]:
+    def optimize(self, frames_dir: str, flows_dir: str, video_reader=None) -> tuple[str, np.ndarray]:
         """Optimize depth and poses for all frames."""
         print("=> Optimizing geometry (depth & poses)...")
         
         # Setup dataset
-        self.dataset = OptimizationDataset(self.config, frames_dir, flows_dir)
+        self.dataset = OptimizationDataset(self.config, frames_dir, flows_dir, video_reader)
         
         # Setup output dir
         if self.config.temp_dir:
