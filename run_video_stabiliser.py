@@ -87,6 +87,9 @@ import argparse
 parser = argparse.ArgumentParser(description="Verify Deep3D Stabilization")
 parser.add_argument("input_video", nargs="?", default="unstable.mp4", help="Path to input video (absolute or relative)")
 parser.add_argument("--output", "-o", default=None, help="Path to output video")
+parser.add_argument("--stability", type=int, default=12, help="Stability score (lower = less smoothing, less warping)")
+parser.add_argument("--smooth_window", type=int, default=59, help="Smoothing window size")
+parser.add_argument("--crop_ratio", type=float, default=0.8, help="Crop ratio (lower = more crop)")
 args = parser.parse_args()
 
 input_video = args.input_video
@@ -128,8 +131,9 @@ if not os.path.exists(input_video):
 result = stabilize_video_deep3d(
     input_video, 
     output_video, 
-    stability=12,
-    crop_ratio=0.8,
+    stability=args.stability,
+    crop_ratio=args.crop_ratio,
+    smooth_window=args.smooth_window,
     temp_dir=temp_dir,
     num_epochs=5, # Reduced for verification speed
     init_num_epochs=10, # Reduced for verification speed

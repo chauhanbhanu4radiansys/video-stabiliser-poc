@@ -81,7 +81,24 @@ class ResnetEncoder(nn.Module):
         if num_input_channel != 3:
             self.encoder = resnet_multiimage_input(num_layers, pretrained, num_input_channel)
         else:
-            self.encoder = resnets[num_layers](pretrained)
+            # Use weights argument instead of pretrained to avoid warnings
+            if pretrained:
+                if num_layers == 18:
+                    weights = models.ResNet18_Weights.DEFAULT
+                elif num_layers == 34:
+                    weights = models.ResNet34_Weights.DEFAULT
+                elif num_layers == 50:
+                    weights = models.ResNet50_Weights.DEFAULT
+                elif num_layers == 101:
+                    weights = models.ResNet101_Weights.DEFAULT
+                elif num_layers == 152:
+                    weights = models.ResNet152_Weights.DEFAULT
+                else:
+                    weights = None
+            else:
+                weights = None
+                
+            self.encoder = resnets[num_layers](weights=weights)
 
         if num_layers > 34:
             self.num_ch_enc[1:] *= 4

@@ -47,6 +47,11 @@ class VideoPostprocessor:
         
         # Write frames
         for frame in tqdm(frames, desc="Writing video"):
+            # Check if frame is valid
+            if frame is None or frame.size == 0:
+                print(f"Warning: Skipping empty frame at index {frames.index(frame) if frame in frames else 'unknown'}")
+                continue
+                
             # Convert RGB to BGR for OpenCV
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
             

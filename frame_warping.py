@@ -83,8 +83,18 @@ class FrameWarper:
         stabilized_frames = []
         
         crop_t, crop_b, crop_l, crop_r = crop_bounds
+        
+        # Validate crop bounds
+        if crop_t >= crop_b or crop_l >= crop_r:
+            print(f"Warning: Invalid crop bounds detected: t={crop_t}, b={crop_b}, l={crop_l}, r={crop_r}")
+            print("Falling back to full frame (no crop).")
+            crop_t, crop_b = 0, self.origin_h
+            crop_l, crop_r = 0, self.origin_w
+            
         crop_w = crop_r - crop_l
         crop_h = crop_b - crop_t
+        
+        print(f"Final crop: t={crop_t}, b={crop_b}, l={crop_l}, r={crop_r} ({crop_w}x{crop_h})")
         
         # Resize warp maps to original resolution for final warping
         # Original code: 
