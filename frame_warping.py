@@ -50,9 +50,12 @@ class FrameWarper:
         
         self.warper = Warper(opt, self.intrinsic_res).to(self.device)
         
-    def warp(self, frames_dir: str, depths_dir: str, compensations: np.ndarray, video_reader=None) -> list[np.ndarray]:
+    def warp(self, frames_dir: str, depths_dir: str, compensations: np.ndarray, video_reader=None, robust_transforms=None) -> list[np.ndarray]:
         """Warp all frames using compensation transforms."""
         print("=> Warping frames...")
+        
+        if self.config.hybrid_stabilization and robust_transforms is not None:
+            print(f"=> Hybrid stabilization enabled. Threshold: {self.config.warping_threshold}")
         
         if video_reader:
             num_frames = len(video_reader)
@@ -161,6 +164,48 @@ class FrameWarper:
             )
             current_warps = current_warps.permute(0, 2, 3, 1) # (B, H, W, 2)
             
+            # Hybrid Stabilization Logic
+            if self.config.hybrid_stabilization and robust_transforms is not None:
+                # Get corresponding 2D transforms for this batch
+                batch_indices = range(batch_begin, batch_end)
+                batch_robust = robust_transforms[batch_indices] # (B, 3) [dx, dy, da]
+                
+                # Convert 2D transforms to dense warp maps (B, H, W, 2) in [-1, 1]
+                robust_warps = self._create_robust_warps(batch_robust, h_orig, w_orig)
+                robust_warps = robust_warps.to(self.device)
+                
+                # Calculate distortion metric for Deep3D warps
+                # Metric: Mean absolute difference between Deep3D warp and 2D warp
+                # This measures how much the 3D warp deviates from a rigid 2D transform
+                # We can compute per-frame distortion
+                
+                # current_warps: (B, H, W, 2)
+                # robust_warps: (B, H, W, 2)
+                
+                diff = torch.abs(current_warps - robust_warps)
+                distortion = diff.mean(dim=(1, 2, 3)) # (B,)
+                
+                # Blend based on threshold
+                # If distortion > threshold, fade to robust_warps
+                # Soft transition?
+                # alpha = clamp((distortion - thresh) / margin, 0, 1)
+                # final = (1-alpha)*deep3d + alpha*robust
+                
+                thresh = self.config.warping_threshold
+                margin = thresh * 0.5 # Transition range
+                
+                alpha = torch.clamp((distortion - thresh) / margin, 0.0, 1.0)
+                
+                # Expand alpha for broadcasting: (B, 1, 1, 1)
+                alpha_expanded = alpha.view(-1, 1, 1, 1)
+                
+                current_warps = (1.0 - alpha_expanded) * current_warps + alpha_expanded * robust_warps
+                
+                # Debug print for high distortion
+                if alpha.max() > 0:
+                    high_dist_idx = torch.where(alpha > 0)[0]
+                    # print(f"  Hybrid: Blending {len(high_dist_idx)} frames. Max alpha: {alpha.max().item():.2f}")
+
             # Apply warp
             reproj_imgs = F.grid_sample(imgs, current_warps, align_corners=False)
             
@@ -288,3 +333,96 @@ class FrameWarper:
         r = int(torch.floor(torch.clamp(torch.min(border_r), 0, w))) if border_r.numel() > 0 else w
         
         return t, b, l, r
+
+    def _create_robust_warps(self, transforms, h, w):
+        """Convert 2D affine transforms [dx, dy, da] to dense warp maps (B, H, W, 2) in [-1, 1]."""
+        B = len(transforms)
+        
+        # Create meshgrid
+        # grid_y, grid_x = torch.meshgrid(torch.arange(h), torch.arange(w), indexing='ij')
+        # grid = torch.stack([grid_x, grid_y], dim=-1).float() # (H, W, 2)
+        # grid = grid.unsqueeze(0).repeat(B, 1, 1, 1) # (B, H, W, 2)
+        
+        # Actually, we can just construct the affine matrices and use F.affine_grid?
+        # F.affine_grid takes (B, 2, 3) and returns (B, H, W, 2) in [-1, 1]
+        # But F.affine_grid expects the matrix to map output [-1, 1] to input [-1, 1].
+        
+        # Our transforms are [dx, dy, da] in pixel space.
+        # dx, dy are translation in pixels. da is rotation in radians.
+        # We need to convert this to normalized coordinates [-1, 1].
+        
+        # Pixel space: x_new = cos(da)*x - sin(da)*y + dx
+        # Normalized space: u = (2*x / (w-1)) - 1
+        # This conversion is tedious.
+        
+        # Easier: Construct pixel-space grid, apply transform, normalize.
+        
+        device = self.device
+        
+        # 1. Create pixel grid (B, H, W, 3) homogeneous
+        y_range = torch.arange(h, device=device)
+        x_range = torch.arange(w, device=device)
+        grid_y, grid_x = torch.meshgrid(y_range, x_range, indexing='ij')
+        ones = torch.ones_like(grid_x)
+        grid = torch.stack([grid_x, grid_y, ones], dim=-1).float() # (H, W, 3)
+        grid = grid.unsqueeze(0).repeat(B, 1, 1, 1) # (B, H, W, 3)
+        
+        # 2. Construct affine matrices (B, 3, 3) inverse?
+        # We want the warp map: for each output pixel (x,y), where does it come from in input?
+        # Our 'transforms' are corrections: Input -> Stabilized.
+        # So Stabilized = M * Input.
+        # We want Input = M^-1 * Stabilized.
+        # So we need the inverse of the correction transform.
+        # Wait, 'transforms' from RobustStabilizer are 'difference' = Smoothed - Trajectory.
+        # As established, 'difference' is the translation to apply to the frame.
+        # So x_new = x_old + diff.
+        # x_old = x_new - diff.
+        # So we need to apply -diff.
+        
+        # Let's build the matrix for -diff.
+        # dx, dy, da from transforms.
+        # We want inverse: -dx, -dy, -da.
+        # Approximately. For rotation, inverse is -angle.
+        
+        dx = -transforms[:, 0]
+        dy = -transforms[:, 1]
+        da = -transforms[:, 2]
+        
+        # Build matrices (B, 2, 3)
+        # [ cos  -sin   dx ]
+        # [ sin   cos   dy ]
+        
+        cos_a = np.cos(da)
+        sin_a = np.sin(da)
+        
+        # Use torch
+        cos_a = torch.from_numpy(cos_a).float().to(device)
+        sin_a = torch.from_numpy(sin_a).float().to(device)
+        dx = torch.from_numpy(dx).float().to(device)
+        dy = torch.from_numpy(dy).float().to(device)
+        
+        # Compute grid coordinates
+        # x_src = x_dst * cos - y_dst * sin + dx
+        # y_src = x_dst * sin + y_dst * cos + dy
+        
+        # grid[..., 0] is x, grid[..., 1] is y
+        
+        x_dst = grid[..., 0]
+        y_dst = grid[..., 1]
+        
+        # Reshape parameters for broadcasting: (B, 1, 1)
+        cos_a = cos_a.view(B, 1, 1)
+        sin_a = sin_a.view(B, 1, 1)
+        dx = dx.view(B, 1, 1)
+        dy = dy.view(B, 1, 1)
+        
+        x_src = x_dst * cos_a - y_dst * sin_a + dx
+        y_src = x_dst * sin_a + y_dst * cos_a + dy
+        
+        # 3. Normalize to [-1, 1]
+        u = (x_src / (w - 1)) * 2 - 1
+        v = (y_src / (h - 1)) * 2 - 1
+        
+        warp = torch.stack([u, v], dim=-1) # (B, H, W, 2)
+        
+        return warp

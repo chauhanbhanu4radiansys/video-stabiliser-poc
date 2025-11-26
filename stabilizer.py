@@ -188,7 +188,26 @@ class Deep3DStabilizer:
             # Stage 5: Warp frames
             # Note: frames_dir is still needed for warping (loads frames from disk)
             stage_start = time.time()
-            stabilized_frames = self.frame_warper.warp(frames_dir, depths_dir, compensations, self.video_reader)
+            # Hybrid Stabilization: Get 2D transforms if enabled
+            robust_transforms = None
+            if self.config.hybrid_stabilization:
+                print("=> Running Robust 2D Stabilizer for hybrid mode...")
+                from .robust_2d.stabilizer import RobustStabilizer
+                # We need a temporary output path for RobustStabilizer init, though we only use get_correction_transforms
+                # Just use a dummy path
+                dummy_out = os.path.join(self.config.temp_dir, "dummy_robust.mp4")
+                rs = RobustStabilizer(self.config.input_video_path, dummy_out)
+                robust_transforms = rs.get_correction_transforms()
+                print("=> Robust 2D transforms calculated.")
+
+            # 4. Warp frames
+            stabilized_frames = self.frame_warper.warp(
+                frames_dir, 
+                depths_dir, 
+                compensations, 
+                video_reader=self.video_reader,
+                robust_transforms=robust_transforms
+            )
             stage_time = time.time() - stage_start
             stage_times['frame_warping'] = stage_time
             stage_memory = self._get_memory_usage()

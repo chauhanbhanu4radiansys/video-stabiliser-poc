@@ -90,6 +90,8 @@ parser.add_argument("--output", "-o", default=None, help="Path to output video")
 parser.add_argument("--stability", type=int, default=12, help="Stability score (lower = less smoothing, less warping)")
 parser.add_argument("--smooth_window", type=int, default=59, help="Smoothing window size")
 parser.add_argument("--crop_ratio", type=float, default=0.8, help="Crop ratio (lower = more crop)")
+parser.add_argument("--hybrid", action="store_true", help="Enable hybrid stabilization (Deep3D + 2D fallback)")
+parser.add_argument("--threshold", type=float, default=0.05, help="Warping threshold for hybrid mode")
 args = parser.parse_args()
 
 input_video = args.input_video
@@ -134,6 +136,8 @@ result = stabilize_video_deep3d(
     stability=args.stability,
     crop_ratio=args.crop_ratio,
     smooth_window=args.smooth_window,
+    hybrid_stabilization=args.hybrid,
+    warping_threshold=args.threshold,
     temp_dir=temp_dir,
     num_epochs=5, # Reduced for verification speed
     init_num_epochs=10, # Reduced for verification speed

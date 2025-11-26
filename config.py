@@ -22,6 +22,10 @@ class StabilizationConfig:
     # Smoothing
     smooth_window: int = 59
     
+    # Hybrid Stabilization
+    hybrid_stabilization: bool = False
+    warping_threshold: float = 0.05 # Threshold for switching to 2D warp
+    
     # Processing
     target_flow_resolution: Tuple[int, int] = (640, 384)
     img_mean: float = 0.45
